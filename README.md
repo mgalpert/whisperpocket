@@ -18,9 +18,13 @@ Designed to work with [brabble](https://github.com/steipete/brabble) (wake-word 
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`)
 - Python 3.10+
 
+For the full voice pipeline you also need:
+- [brabble](https://github.com/steipete/brabble) — always-on wake-word voice daemon (listens on mic, runs hooks on speech)
+- [openclaw](https://docs.openclaw.ai) — LLM gateway (or any CLI that takes a text argument and prints a response)
+
 ## Quick Start
 
-### TTS only
+### TTS only (no other dependencies)
 
 ```bash
 make install
@@ -31,7 +35,7 @@ brabpocket "Hello world"
 # First run downloads models (~400MB), subsequent runs are instant (~350ms)
 ```
 
-### STT only
+### STT only (no other dependencies)
 
 ```bash
 cd stt-server
@@ -43,9 +47,49 @@ ffmpeg -i test.wav -f s16le -ar 16000 -ac 1 - | \
     --data-binary @- -H 'Content-Type: application/octet-stream'
 ```
 
-### Full pipeline with brabble
+### Full voice pipeline (STT → LLM → TTS)
 
-Set your brabble config (`~/.config/brabble/config.toml`):
+This gives you a voice assistant you can talk to. You'll need brabble + an LLM backend.
+
+**1. Install brabpocket (this repo):**
+
+```bash
+git clone https://github.com/mgalpert/brabpocket.git
+cd brabpocket
+make install          # installs brabpocket + brabble-tts-hook.sh to ~/.local/bin
+brabpocket warmup     # downloads TTS models (~400MB, one-time)
+```
+
+**2. Install brabble** (wake-word daemon — listens on your mic):
+
+```bash
+# Clone and build with MLX backend (no whisper.cpp CGO dependency)
+git clone https://github.com/steipete/brabble.git
+cd brabble
+make build-mlx        # builds to bin/brabble
+cp bin/brabble ~/.local/bin/
+```
+
+**3. Install openclaw** (LLM gateway — routes your voice to an AI agent):
+
+```bash
+npm install -g openclaw@latest    # requires Node.js 22+
+openclaw onboard --install-daemon  # walks you through API key setup + starts the gateway
+```
+
+During onboarding you'll set up an Anthropic API key (recommended) or other provider. openclaw runs a local gateway that manages agent sessions, so your voice conversations have memory and context.
+
+Once onboarded, create an agent:
+
+```bash
+openclaw agents create main       # creates the "main" agent
+```
+
+The hook script calls `openclaw agent --agent main --message "<your speech>"` by default. The agent responds with text that gets chunked and spoken back via TTS.
+
+> **Don't want openclaw?** Any CLI that takes text as an argument and prints a response works. Set the `LLM_COMMAND` env var — see [Hook Script](#hook-script) below.
+
+**4. Configure brabble** (`~/.config/brabble/config.toml`):
 
 ```toml
 [asr]
@@ -53,13 +97,35 @@ backend = "mlx"
 model_name = "distil-small.en"
 stt_port = 8112
 
+[wake]
+enabled = true
+word = "pal"                   # your wake word — say this to activate
+aliases = ["hey pal"]
+
 [[hooks]]
 wake = ["pal", "hey pal"]
-command = "/path/to/brabpocket/brabble-tts-hook.sh"
+command = "~/.local/bin/brabble-tts-hook.sh"
 timeout_sec = 180
+min_chars = 8
+cooldown_sec = 1
 ```
 
-Then `brabble start` — speak your wake word, brabble transcribes via the STT daemon, runs the hook (which queries your LLM and speaks the response via brabpocket).
+**5. Start:**
+
+```bash
+brabble start
+# Say "hey pal, what's the weather like?" and listen
+```
+
+**6. Verify everything works:**
+
+```bash
+brabble doctor        # checks mic, STT daemon, hook
+brabble status        # uptime + recent transcripts
+brabble test-hook "what time is it"   # test the full hook without speaking
+```
+
+To stop TTS mid-response, say "stop", "shush", or "shut up" — or run `brabble shush`.
 
 ## TTS Usage
 
@@ -116,8 +182,22 @@ uv run python server.py serve --port 8112 --model distil-small.en
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BRABPOCKET` | `~/.local/bin/brabpocket` | Path to TTS binary |
-| `LLM_COMMAND` | `openclaw agent --agent main --message` | LLM command (text appended as arg) |
+| `LLM_COMMAND` | `openclaw agent --agent main --message` | LLM command (text appended as last arg) |
 | `TYPING_AUDIO` | `<script_dir>/Resources/typing.wav` | Typing sound effect |
+
+The `LLM_COMMAND` must be a command that accepts the spoken text as its final argument and prints a text response to stdout. To use a different LLM backend, set it in your brabble hook config:
+
+```toml
+[[hooks]]
+command = "~/.local/bin/brabble-tts-hook.sh"
+env = { LLM_COMMAND = "llm -m claude-sonnet-4-5" }
+```
+
+Or for a custom script:
+
+```toml
+env = { LLM_COMMAND = "/path/to/my-llm-wrapper" }
+```
 
 ## How It Works
 
