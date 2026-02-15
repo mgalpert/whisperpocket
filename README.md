@@ -12,14 +12,13 @@ Mic → VAD → Whisper STT → wake word → LLM → PocketTTS → speaker
 ## Install
 
 ```bash
-git clone https://github.com/mgalpert/brabpocket.git
-cd brabpocket
+git clone https://github.com/mgalpert/whisperpocket.git && cd whisperpocket
 make install
 ```
 
 Requires macOS 14+ on Apple Silicon, [uv](https://docs.astral.sh/uv/) (`brew install uv`), Python 3.10+.
 
-## Voice Assistant (`wp listen`)
+## Usage
 
 ```bash
 wp listen --wake pal --wake "hey pal"
@@ -45,35 +44,17 @@ Say your wake word followed by a question. It transcribes your speech, sends it 
 
 ## TTS Only
 
-Don't need the voice assistant? `wp` also works as a standalone TTS tool:
+`wp` also works as a standalone TTS tool:
 
 ```bash
 wp "Hello world"               # speak text (auto-starts daemon)
 wp "Hello world" -o out.wav    # write to file
 wp serve                       # run daemon in foreground
-wp status                      # check daemon status
 wp stop                        # stop daemon
 wp warmup                      # pre-load models
 ```
 
-### Latency
-
-| Text | Time |
-|------|------|
-| Single word | ~350ms |
-| Short sentence | ~500ms |
-| Long sentence | ~1.3s |
-
-### Always-on daemon (launchd)
-
-```bash
-make install-daemon    # install + enable launchd service
-make uninstall-daemon  # remove
-```
-
 ## How It Works
-
-### Pipeline
 
 1. **Capture** — `sounddevice` records 16kHz mono audio
 2. **VAD** — WebRTC VAD (aggressiveness 2) detects speech segments
@@ -83,28 +64,6 @@ make uninstall-daemon  # remove
 6. **Chunking** — Splits response into sentences, strips markdown
 7. **TTS** — [PocketTTS](https://github.com/kyutai-labs/pockettts) synthesizes in-process, pipelined (next chunk synthesizes while current plays)
 8. **Playback** — `sounddevice` plays 24kHz float32 audio
-
-### Typing sounds
-
-Extracts individual keystroke sounds from `Resources/typing.wav` and plays them in word-like bursts with natural cadence — fast keys within words, pauses between words, longer thinking pauses every few words.
-
-### Stop words
-
-A lightweight VAD listener runs during TTS playback. If it hears a short utterance containing "stop", "shush", "shut up", "quiet", or "enough", playback cuts within 50ms.
-
-## Other Components
-
-### STT server (standalone)
-
-The `stt-server/` directory is a FastAPI app for HTTP-based transcription:
-
-```bash
-cd stt-server
-uv run python server.py serve --port 8112 --model distil-small.en
-```
-
-- `POST /transcribe` — raw PCM int16 LE body → `{"text": "...", "duration_ms": N}`
-- `GET /health` — `{"status": "ok", "model": "..."}`
 
 ## License
 
