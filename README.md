@@ -1,160 +1,114 @@
 # whisperpocket
 
-Local voice pipeline for Apple Silicon: **STT** (MLX Whisper) + **TTS** (PocketTTS). No API keys, no cloud, no cost.
+Local voice assistant for Apple Silicon. Wake word → STT → LLM → TTS, all on-device. No API keys, no cloud, no cost.
 
-## Components
+```
+"Hey pal, what time is it?"
 
-| Component | What it does | Port |
-|-----------|-------------|------|
-| `wp` | TTS CLI + daemon (PocketTTS, 155M params) | 8111 |
-| `wp listen` | Full voice pipeline: mic → VAD → STT → wake word → LLM → TTS | — |
-| `stt-server/` | Standalone STT daemon (MLX Whisper on Apple Silicon GPU) | 8112 |
-| `wp-hook.sh` | Glue script for brabble: LLM query → sentence chunking → pipelined TTS | — |
-
-## Requirements
-
-- macOS 14+ on Apple Silicon
-- [uv](https://docs.astral.sh/uv/) (`brew install uv`)
-- Python 3.10+
-
-For the full voice pipeline you also need:
-- [openclaw](https://docs.openclaw.ai) — LLM gateway (or any CLI that takes a text argument and prints a response)
-
-## Quick Start
-
-### TTS only
-
-```bash
-make install
-
-# Speak (auto-starts daemon on first use)
-wp "Hello world"
-
-# First run downloads models (~400MB), subsequent runs are instant (~350ms)
+Mic → VAD → Whisper STT → wake word → LLM → PocketTTS → speaker
+         (one Python process, no daemons, no HTTP)
 ```
 
-### Voice pipeline (`wp listen`)
-
-One process replaces the entire brabble + stt-server + hook script with a single voice pipeline: audio capture → VAD → STT → wake word → LLM → chunked TTS → playback.
+## Install
 
 ```bash
-# Install
-git clone https://github.com/mgalpert/whisperpocket.git
-cd whisperpocket
+git clone https://github.com/mgalpert/brabpocket.git
+cd brabpocket
 make install
+```
 
-# Start listening
+Requires macOS 14+ on Apple Silicon, [uv](https://docs.astral.sh/uv/) (`brew install uv`), Python 3.10+.
+
+## Voice Assistant (`wp listen`)
+
+```bash
 wp listen --wake pal --wake "hey pal"
-
-# Say "hey pal, what time is it?" and listen
 ```
 
-**Options:**
+That's it. First run downloads models (~500MB total), then it's fully offline.
 
-```
-wp listen [options]
-  --wake WORD          Wake word (repeatable). Required.
-  --llm COMMAND        LLM command (default: openclaw agent --agent main --message)
-  --model MODEL        Whisper model (default: distil-small.en)
-  --voice VOICE        TTS voice (default: alba)
-  --energy-threshold N dBFS gate (default: -35)
-  --no-typing          Disable typing sounds
-  --verbose            Debug output
-```
+Say your wake word followed by a question. It transcribes your speech, sends it to an LLM, and speaks the response back — with ASMR typing sounds while it thinks.
 
-To stop TTS mid-response, say "stop", "shush", "shut up", "quiet", or "enough".
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--wake WORD` | *(required)* | Wake word (repeatable) |
+| `--llm COMMAND` | `openclaw agent --agent main --message` | LLM command |
+| `--model MODEL` | `distil-small.en` | Whisper model |
+| `--voice VOICE` | `alba` | TTS voice |
+| `--energy-threshold N` | `-35` | dBFS gate |
+| `--no-typing` | | Disable typing sounds |
+| `--verbose` | | Debug output |
 
-### STT server (standalone)
+**Interrupting:** Say "stop", "shush", "shut up", "quiet", or "enough" — or press Escape.
 
-```bash
-cd stt-server
-uv run python server.py serve --port 8112 --model distil-small.en
+**LLM backend:** Uses [openclaw](https://docs.openclaw.ai) by default, but any CLI that takes text as its last argument and prints a response works. Pass `--llm "your-command"`.
 
-# Test with a WAV file
-ffmpeg -i test.wav -f s16le -ar 16000 -ac 1 - | \
-  curl -s -X POST http://localhost:8112/transcribe \
-    --data-binary @- -H 'Content-Type: application/octet-stream'
-```
+## TTS Only
 
-## TTS Usage
+Don't need the voice assistant? `wp` also works as a standalone TTS tool:
 
 ```bash
 wp "Hello world"               # speak text (auto-starts daemon)
-wp "Hello world" -o out.wav    # write to file instead
+wp "Hello world" -o out.wav    # write to file
 wp serve                       # run daemon in foreground
 wp status                      # check daemon status
 wp stop                        # stop daemon
 wp warmup                      # pre-load models
 ```
 
-### Always-On Daemon (launchd)
+### Latency
+
+| Text | Time |
+|------|------|
+| Single word | ~350ms |
+| Short sentence | ~500ms |
+| Long sentence | ~1.3s |
+
+### Always-on daemon (launchd)
 
 ```bash
 make install-daemon    # install + enable launchd service
-make uninstall-daemon  # remove launchd service
+make uninstall-daemon  # remove
 ```
 
-### TTS Latency
+## How It Works
 
-| Text Length | Synthesis Time | vs ElevenLabs |
-|------------|---------------|---------------|
-| Single word | ~350ms | 2x faster |
-| Short sentence | ~500ms | 2-3x faster |
-| Long sentence | ~1.3s | comparable |
+### Pipeline
 
-## STT Server
+1. **Capture** — `sounddevice` records 16kHz mono audio
+2. **VAD** — WebRTC VAD (aggressiveness 2) detects speech segments
+3. **STT** — [Lightning Whisper MLX](https://github.com/mustafaaljadery/lightning-whisper-mlx) transcribes in-process on the GPU
+4. **Wake word** — Punctuation-tolerant matching ("Hey, pal!" matches "hey pal")
+5. **LLM** — Runs your LLM command as a subprocess, plays typing sounds while waiting
+6. **Chunking** — Splits response into sentences, strips markdown
+7. **TTS** — [PocketTTS](https://github.com/kyutai-labs/pockettts) synthesizes in-process, pipelined (next chunk synthesizes while current plays)
+8. **Playback** — `sounddevice` plays 24kHz float32 audio
 
-The `stt-server/` directory is a FastAPI app that loads [lightning-whisper-mlx](https://github.com/mustafaaljadery/lightning-whisper-mlx) and keeps it warm in GPU memory.
+### Typing sounds
 
-**Endpoints:**
-- `POST /transcribe` — raw PCM int16 LE body → `{"text": "...", "duration_ms": N}`
-- `GET /health` — `{"status": "ok", "model": "..."}`
+Extracts individual keystroke sounds from `Resources/typing.wav` and plays them in word-like bursts with natural cadence — fast keys within words, pauses between words, longer thinking pauses every few words.
 
-**Available models:** `distil-small.en` (fastest), `distil-medium.en`, `distil-large-v3`, `large-v3-turbo`. Models download automatically on first use.
+### Stop words
+
+A lightweight VAD listener runs during TTS playback. If it hears a short utterance containing "stop", "shush", "shut up", "quiet", or "enough", playback cuts within 50ms.
+
+## Other Components
+
+### STT server (standalone)
+
+The `stt-server/` directory is a FastAPI app for HTTP-based transcription:
 
 ```bash
 cd stt-server
 uv run python server.py serve --port 8112 --model distil-small.en
 ```
 
-## Hook Script (brabble integration)
+- `POST /transcribe` — raw PCM int16 LE body → `{"text": "...", "duration_ms": N}`
+- `GET /health` — `{"status": "ok", "model": "..."}`
 
-`wp-hook.sh` is the glue between STT and TTS when used with [brabble](https://github.com/steipete/brabble). When brabble hears speech:
+### Hook script (brabble integration)
 
-1. Plays ASMR keyboard typing sounds while waiting
-2. Sends transcribed text to your LLM (configurable via `LLM_COMMAND` env var)
-3. Splits the response into sentences/chunks (strips markdown)
-4. Synthesizes + plays chunks with 1-ahead pipelining (next chunk synthesizes while current plays)
-
-**Environment variables:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WP` | `~/.local/bin/wp` | Path to TTS binary |
-| `LLM_COMMAND` | `openclaw agent --agent main --message` | LLM command (text appended as last arg) |
-| `TYPING_AUDIO` | `<script_dir>/Resources/typing.wav` | Typing sound effect |
-
-## How It Works
-
-### `wp listen` (recommended)
-
-```
-Mic → VAD → MLX Whisper STT (in-process) → wake word check
-  → LLM subprocess → sentence chunking
-  → PocketTTS (in-process) → pipelined playback → speaker
-```
-
-Single Python process, no HTTP boundaries, no separate daemons.
-
-### brabble + hook (legacy)
-
-```
-Mic → VAD → MLX Whisper STT (port 8112) → wake word check
-  → hook script → LLM → sentence chunking
-  → PocketTTS (port 8111) → pipelined afplay → speaker
-```
-
-Both STT and TTS stay warm in memory (~200MB TTS + ~300MB STT) for fast repeated inference.
+`wp-hook.sh` integrates with [brabble](https://github.com/steipete/brabble) for wake-word-triggered LLM + TTS. Configurable via `WP`, `LLM_COMMAND`, and `TYPING_AUDIO` env vars.
 
 ## License
 
