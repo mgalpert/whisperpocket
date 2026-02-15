@@ -1,7 +1,7 @@
 [project]
-name = "brabpocket-stt"
+name = "whisperpocket-stt"
 version = "0.1.0"
-description = "MLX Whisper STT daemon for brabpocket"
+description = "MLX Whisper STT daemon for whisperpocket"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115",
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-brabpocket-stt = "server:cli"
+wp-stt = "server:cli"
 
 [build-system]
 requires = ["hatchling"]

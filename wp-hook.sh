@@ -1,10 +1,10 @@
 #!/bin/bash
-# brabble hook: ASMR typing while LLM works + pipelined TTS response
+# wp-hook: ASMR typing while LLM works + pipelined TTS response
 #
-# Called as: brabble-tts-hook.sh "<spoken text>"
+# Called as: wp-hook.sh "<spoken text>"
 #
 # Env vars (set by brabble or override manually):
-#   BRABPOCKET       path to brabpocket binary (default: ~/.local/bin/brabpocket)
+#   WP               path to wp binary (default: ~/.local/bin/wp)
 #   LLM_COMMAND      LLM command to run (default: openclaw agent --agent main --message)
 #   TYPING_AUDIO     path to typing sound WAV (default: <script_dir>/Resources/typing.wav)
 
@@ -14,13 +14,13 @@ if [ -z "$TEXT" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BRABPOCKET="${BRABPOCKET:-${HOME}/.local/bin/brabpocket}"
+WP="${WP:-${HOME}/.local/bin/wp}"
 LLM_COMMAND="${LLM_COMMAND:-/opt/homebrew/bin/openclaw agent --agent main --message}"
 TYPING_AUDIO="${TYPING_AUDIO:-${SCRIPT_DIR}/Resources/typing.wav}"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-echo "[brabble-tts] Q: $TEXT"
+echo "[wp-hook] Q: $TEXT"
 
 # Start ASMR keyboard typing in background (loop it)
 if [ -f "$TYPING_AUDIO" ]; then
@@ -49,7 +49,7 @@ if [ -z "$RESPONSE" ]; then
   exit 0
 fi
 
-echo "[brabble-tts] A: $RESPONSE"
+echo "[wp-hook] A: $RESPONSE"
 
 # Split into chunks and write to numbered files
 python3 -c "
@@ -124,11 +124,11 @@ fi
 # Pipelined TTS: synthesize ahead while playing current chunk.
 # Synthesize first chunk immediately (blocking — need it before we can play).
 FIRST_TXT=$(cat "$TMPDIR/0000.txt")
-"$BRABPOCKET" "$FIRST_TXT" -o "$TMPDIR/0000.wav"
+"$WP" "$FIRST_TXT" -o "$TMPDIR/0000.wav"
 
 # Start synthesizing second chunk in background
 if [ -f "$TMPDIR/0001.txt" ]; then
-  "$BRABPOCKET" "$(cat "$TMPDIR/0001.txt")" -o "$TMPDIR/0001.wav" &
+  "$WP" "$(cat "$TMPDIR/0001.txt")" -o "$TMPDIR/0001.wav" &
   SYNTH_PID=$!
 fi
 
@@ -148,7 +148,7 @@ while [ -f "$TMPDIR/$(printf '%04d' $i).txt" ]; do
 
   # Start synthesizing next chunk in background while we play current
   if [ -f "$NEXT_FILE" ]; then
-    "$BRABPOCKET" "$(cat "$NEXT_FILE")" -o "$TMPDIR/$(printf '%04d' $NEXT).wav" &
+    "$WP" "$(cat "$NEXT_FILE")" -o "$TMPDIR/$(printf '%04d' $NEXT).wav" &
     SYNTH_PID=$!
   else
     SYNTH_PID=""

@@ -1,16 +1,15 @@
-# brabpocket
+# whisperpocket
 
 Local voice pipeline for Apple Silicon: **STT** (MLX Whisper) + **TTS** (PocketTTS). No API keys, no cloud, no cost.
-
-Designed to work with [brabble](https://github.com/steipete/brabble) (wake-word voice daemon), but each piece runs standalone.
 
 ## Components
 
 | Component | What it does | Port |
 |-----------|-------------|------|
-| `brabpocket` | TTS CLI + daemon (PocketTTS, 155M params) | 8111 |
-| `stt-server/` | STT daemon (MLX Whisper on Apple Silicon GPU) | 8112 |
-| `brabble-tts-hook.sh` | Glue script: LLM query → sentence chunking → pipelined TTS | — |
+| `wp` | TTS CLI + daemon (PocketTTS, 155M params) | 8111 |
+| `wp listen` | Full voice pipeline: mic → VAD → STT → wake word → LLM → TTS | — |
+| `stt-server/` | Standalone STT daemon (MLX Whisper on Apple Silicon GPU) | 8112 |
+| `wp-hook.sh` | Glue script for brabble: LLM query → sentence chunking → pipelined TTS | — |
 
 ## Requirements
 
@@ -19,23 +18,53 @@ Designed to work with [brabble](https://github.com/steipete/brabble) (wake-word 
 - Python 3.10+
 
 For the full voice pipeline you also need:
-- [brabble](https://github.com/steipete/brabble) — always-on wake-word voice daemon (listens on mic, runs hooks on speech)
 - [openclaw](https://docs.openclaw.ai) — LLM gateway (or any CLI that takes a text argument and prints a response)
 
 ## Quick Start
 
-### TTS only (no other dependencies)
+### TTS only
 
 ```bash
 make install
 
 # Speak (auto-starts daemon on first use)
-brabpocket "Hello world"
+wp "Hello world"
 
 # First run downloads models (~400MB), subsequent runs are instant (~350ms)
 ```
 
-### STT only (no other dependencies)
+### Voice pipeline (`wp listen`)
+
+One process replaces the entire brabble + stt-server + hook script with a single voice pipeline: audio capture → VAD → STT → wake word → LLM → chunked TTS → playback.
+
+```bash
+# Install
+git clone https://github.com/mgalpert/whisperpocket.git
+cd whisperpocket
+make install
+
+# Start listening
+wp listen --wake pal --wake "hey pal"
+
+# Say "hey pal, what time is it?" and listen
+```
+
+**Options:**
+
+```
+wp listen [options]
+  --wake WORD          Wake word (repeatable). Required.
+  --llm COMMAND        LLM command (default: openclaw agent --agent main --message)
+  --model MODEL        Whisper model (default: distil-small.en)
+  --voice VOICE        TTS voice (default: alba)
+  --energy-threshold N dBFS gate (default: -35)
+  --no-typing          Disable typing sounds
+  --verbose            Debug output
+```
+
+To stop TTS mid-response, say "stop", "shush", "shut up", "quiet", or "enough".
+
+### STT server (standalone)
 
 ```bash
 cd stt-server
@@ -47,95 +76,15 @@ ffmpeg -i test.wav -f s16le -ar 16000 -ac 1 - | \
     --data-binary @- -H 'Content-Type: application/octet-stream'
 ```
 
-### Full voice pipeline (STT → LLM → TTS)
-
-This gives you a voice assistant you can talk to. You'll need brabble + an LLM backend.
-
-**1. Install brabpocket (this repo):**
-
-```bash
-git clone https://github.com/mgalpert/brabpocket.git
-cd brabpocket
-make install          # installs brabpocket + brabble-tts-hook.sh to ~/.local/bin
-brabpocket warmup     # downloads TTS models (~400MB, one-time)
-```
-
-**2. Install brabble** (wake-word daemon — listens on your mic):
-
-```bash
-# Clone and build with MLX backend (no whisper.cpp CGO dependency)
-git clone https://github.com/steipete/brabble.git
-cd brabble
-make build-mlx        # builds to bin/brabble
-cp bin/brabble ~/.local/bin/
-```
-
-**3. Install openclaw** (LLM gateway — routes your voice to an AI agent):
-
-```bash
-npm install -g openclaw@latest    # requires Node.js 22+
-openclaw onboard --install-daemon  # walks you through API key setup + starts the gateway
-```
-
-During onboarding you'll set up an Anthropic API key (recommended) or other provider. openclaw runs a local gateway that manages agent sessions, so your voice conversations have memory and context.
-
-Once onboarded, create an agent:
-
-```bash
-openclaw agents create main       # creates the "main" agent
-```
-
-The hook script calls `openclaw agent --agent main --message "<your speech>"` by default. The agent responds with text that gets chunked and spoken back via TTS.
-
-> **Don't want openclaw?** Any CLI that takes text as an argument and prints a response works. Set the `LLM_COMMAND` env var — see [Hook Script](#hook-script) below.
-
-**4. Configure brabble** (`~/.config/brabble/config.toml`):
-
-```toml
-[asr]
-backend = "mlx"
-model_name = "distil-small.en"
-stt_port = 8112
-
-[wake]
-enabled = true
-word = "pal"                   # your wake word — say this to activate
-aliases = ["hey pal"]
-
-[[hooks]]
-wake = ["pal", "hey pal"]
-command = "~/.local/bin/brabble-tts-hook.sh"
-timeout_sec = 180
-min_chars = 8
-cooldown_sec = 1
-```
-
-**5. Start:**
-
-```bash
-brabble start
-# Say "hey pal, what's the weather like?" and listen
-```
-
-**6. Verify everything works:**
-
-```bash
-brabble doctor        # checks mic, STT daemon, hook
-brabble status        # uptime + recent transcripts
-brabble test-hook "what time is it"   # test the full hook without speaking
-```
-
-To stop TTS mid-response, say "stop", "shush", or "shut up" — or run `brabble shush`.
-
 ## TTS Usage
 
 ```bash
-brabpocket "Hello world"               # speak text (auto-starts daemon)
-brabpocket "Hello world" -o out.wav    # write to file instead
-brabpocket serve                       # run daemon in foreground
-brabpocket status                      # check daemon status
-brabpocket stop                        # stop daemon
-brabpocket warmup                      # pre-load models
+wp "Hello world"               # speak text (auto-starts daemon)
+wp "Hello world" -o out.wav    # write to file instead
+wp serve                       # run daemon in foreground
+wp status                      # check daemon status
+wp stop                        # stop daemon
+wp warmup                      # pre-load models
 ```
 
 ### Always-On Daemon (launchd)
@@ -168,9 +117,9 @@ cd stt-server
 uv run python server.py serve --port 8112 --model distil-small.en
 ```
 
-## Hook Script
+## Hook Script (brabble integration)
 
-`brabble-tts-hook.sh` is the glue between STT and TTS. When brabble hears speech:
+`wp-hook.sh` is the glue between STT and TTS when used with [brabble](https://github.com/steipete/brabble). When brabble hears speech:
 
 1. Plays ASMR keyboard typing sounds while waiting
 2. Sends transcribed text to your LLM (configurable via `LLM_COMMAND` env var)
@@ -181,25 +130,23 @@ uv run python server.py serve --port 8112 --model distil-small.en
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BRABPOCKET` | `~/.local/bin/brabpocket` | Path to TTS binary |
+| `WP` | `~/.local/bin/wp` | Path to TTS binary |
 | `LLM_COMMAND` | `openclaw agent --agent main --message` | LLM command (text appended as last arg) |
 | `TYPING_AUDIO` | `<script_dir>/Resources/typing.wav` | Typing sound effect |
 
-The `LLM_COMMAND` must be a command that accepts the spoken text as its final argument and prints a text response to stdout. To use a different LLM backend, set it in your brabble hook config:
-
-```toml
-[[hooks]]
-command = "~/.local/bin/brabble-tts-hook.sh"
-env = { LLM_COMMAND = "llm -m claude-sonnet-4-5" }
-```
-
-Or for a custom script:
-
-```toml
-env = { LLM_COMMAND = "/path/to/my-llm-wrapper" }
-```
-
 ## How It Works
+
+### `wp listen` (recommended)
+
+```
+Mic → VAD → MLX Whisper STT (in-process) → wake word check
+  → LLM subprocess → sentence chunking
+  → PocketTTS (in-process) → pipelined playback → speaker
+```
+
+Single Python process, no HTTP boundaries, no separate daemons.
+
+### brabble + hook (legacy)
 
 ```
 Mic → VAD → MLX Whisper STT (port 8112) → wake word check
@@ -207,7 +154,7 @@ Mic → VAD → MLX Whisper STT (port 8112) → wake word check
   → PocketTTS (port 8111) → pipelined afplay → speaker
 ```
 
-Both daemons stay warm in memory (~200MB TTS + ~300MB STT) for fast repeated inference. Brabble suppresses ASR while the hook is running to prevent TTS feedback loops, with a 2-second grace period for residual audio decay.
+Both STT and TTS stay warm in memory (~200MB TTS + ~300MB STT) for fast repeated inference.
 
 ## License
 

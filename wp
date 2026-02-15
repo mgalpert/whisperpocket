@@ -1,10 +1,12 @@
 #!/bin/bash
-# brabpocket — fast local TTS for Apple Silicon
+# wp — fast local TTS for Apple Silicon
 # Uses pocket-tts (Kyutai PocketTTS) as backend daemon
 
 set -euo pipefail
 
-STATE_DIR="${HOME}/.local/state/brabpocket"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${HOME}/.local/lib/whisperpocket"
+STATE_DIR="${HOME}/.local/state/wp"
 PID_FILE="${STATE_DIR}/daemon.pid"
 LOG_FILE="${STATE_DIR}/daemon.log"
 PORT=8111
@@ -25,15 +27,15 @@ wait_for_ready() {
     if curl -sf "${BASE_URL}/health" >/dev/null 2>&1; then
       return 0
     fi
-    [ "$i" -eq 5 ] && echo "[brabpocket] Loading models..." >&2
+    [ "$i" -eq 5 ] && echo "[wp] Loading models..." >&2
     sleep 1
   done
-  echo "[brabpocket] Error: daemon failed to start (${max_wait}s timeout)" >&2
+  echo "[wp] Error: daemon failed to start (${max_wait}s timeout)" >&2
   return 1
 }
 
 start_daemon() {
-  echo "[brabpocket] Starting daemon..." >&2
+  echo "[wp] Starting daemon..." >&2
   uvx pocket-tts serve --port "$PORT" --voice "$VOICE" >> "$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" > "$PID_FILE"
@@ -67,10 +69,10 @@ cmd_speak() {
 
 cmd_serve() {
   if is_daemon_running; then
-    echo "[brabpocket] Daemon already running (pid $(cat "$PID_FILE"))"
+    echo "[wp] Daemon already running (pid $(cat "$PID_FILE"))"
     return 0
   fi
-  echo "[brabpocket] Starting daemon on port ${PORT}..."
+  echo "[wp] Starting daemon on port ${PORT}..."
   uvx pocket-tts serve --port "$PORT" --voice "$VOICE" 2>&1 &
   local pid=$!
   echo "$pid" > "$PID_FILE"
@@ -79,11 +81,11 @@ cmd_serve() {
 
 cmd_status() {
   if is_daemon_running && curl -sf "${BASE_URL}/health" >/dev/null 2>&1; then
-    echo "[brabpocket] Daemon running (pid $(cat "$PID_FILE")), healthy"
+    echo "[wp] Daemon running (pid $(cat "$PID_FILE")), healthy"
   elif is_daemon_running; then
-    echo "[brabpocket] Daemon running (pid $(cat "$PID_FILE")), NOT healthy"
+    echo "[wp] Daemon running (pid $(cat "$PID_FILE")), NOT healthy"
   else
-    echo "[brabpocket] Daemon not running"
+    echo "[wp] Daemon not running"
   fi
 }
 
@@ -91,9 +93,9 @@ cmd_stop() {
   if is_daemon_running; then
     local pid
     pid=$(cat "$PID_FILE")
-    kill "$pid" 2>/dev/null && echo "[brabpocket] Stopped daemon (pid ${pid})"
+    kill "$pid" 2>/dev/null && echo "[wp] Stopped daemon (pid ${pid})"
   else
-    echo "[brabpocket] Daemon not running"
+    echo "[wp] Daemon not running"
   fi
   rm -f "$PID_FILE"
 }
@@ -102,21 +104,22 @@ cmd_warmup() {
   ensure_daemon
   # Synthesize a short phrase to warm caches
   curl -sf -X POST "${BASE_URL}/tts" -F "text=Ready." --output /dev/null
-  echo "[brabpocket] Warm and ready"
+  echo "[wp] Warm and ready"
 }
 
 cmd_help() {
   cat <<'EOF'
-brabpocket — fast local TTS for Apple Silicon
+wp — fast local TTS for Apple Silicon
 
 Usage:
-  brabpocket "text"                    Speak text (auto-starts daemon)
-  brabpocket "text" -o out.wav         Write to file instead
-  brabpocket serve                     Run daemon in foreground
-  brabpocket status                    Check daemon status
-  brabpocket stop                      Stop daemon
-  brabpocket warmup                    Pre-load models
-  brabpocket help                      Show this help
+  wp "text"                    Speak text (auto-starts daemon)
+  wp "text" -o out.wav         Write to file instead
+  wp serve                     Run daemon in foreground
+  wp status                    Check daemon status
+  wp stop                      Stop daemon
+  wp warmup                    Pre-load models
+  wp listen [options]          Start voice pipeline (STT → LLM → TTS)
+  wp help                      Show this help
 
 Requires: uv (brew install uv)
 Backend:  pocket-tts (Kyutai PocketTTS, Apache 2.0)
@@ -130,6 +133,7 @@ case "${1:-help}" in
   status) cmd_status ;;
   stop)   cmd_stop ;;
   warmup) cmd_warmup ;;
+  listen) shift; exec uv run --directory "$LIB_DIR" python listen.py "$@" ;;
   help|--help|-h) cmd_help ;;
   -*)
     echo "Unknown option: $1" >&2; cmd_help; exit 1 ;;

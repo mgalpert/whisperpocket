@@ -57,7 +57,7 @@ async def health():
 
 
 def cli():
-    parser = argparse.ArgumentParser(prog="brabpocket-stt")
+    parser = argparse.ArgumentParser(prog="wp-stt")
     sub = parser.add_subparsers(dest="command")
     serve_parser = sub.add_parser("serve", help="Start STT server")
     serve_parser.add_argument("--port", type=int, default=8112)

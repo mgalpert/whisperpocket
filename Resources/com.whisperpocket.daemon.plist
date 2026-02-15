@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.brabpocket.daemon</string>
+    <string>com.whisperpocket.daemon</string>
     <key>ProgramArguments</key>
     <array>
         <string>__BINARY__</string>
@@ -14,9 +14,9 @@
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/brabpocket-daemon.log</string>
+    <string>/tmp/wp-daemon.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/brabpocket-daemon.log</string>
+    <string>/tmp/wp-daemon.log</string>
     <key>ProcessType</key>
     <string>Interactive</string>
 </dict>
