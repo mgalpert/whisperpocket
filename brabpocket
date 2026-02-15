@@ -1,0 +1,150 @@
+#!/bin/bash
+# brabpocket — fast local TTS for Apple Silicon
+# Uses pocket-tts (Kyutai PocketTTS) as backend daemon
+
+set -euo pipefail
+
+STATE_DIR="${HOME}/.local/state/brabpocket"
+PID_FILE="${STATE_DIR}/daemon.pid"
+LOG_FILE="${STATE_DIR}/daemon.log"
+PORT=8111
+BASE_URL="http://localhost:${PORT}"
+VOICE="alba"
+
+mkdir -p "$STATE_DIR"
+
+# ── helpers ──────────────────────────────────────────────────────────
+
+is_daemon_running() {
+  [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
+wait_for_ready() {
+  local max_wait=${1:-60}
+  for i in $(seq 1 "$max_wait"); do
+    if curl -sf "${BASE_URL}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    [ "$i" -eq 5 ] && echo "[brabpocket] Loading models..." >&2
+    sleep 1
+  done
+  echo "[brabpocket] Error: daemon failed to start (${max_wait}s timeout)" >&2
+  return 1
+}
+
+start_daemon() {
+  echo "[brabpocket] Starting daemon..." >&2
+  uvx pocket-tts serve --port "$PORT" --voice "$VOICE" >> "$LOG_FILE" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$PID_FILE"
+  wait_for_ready 60
+}
+
+ensure_daemon() {
+  if is_daemon_running && curl -sf "${BASE_URL}/health" >/dev/null 2>&1; then
+    return 0
+  fi
+  # Stale pid or not running
+  rm -f "$PID_FILE"
+  start_daemon
+}
+
+# ── commands ─────────────────────────────────────────────────────────
+
+cmd_speak() {
+  local text="$1"
+  local output="${2:-}"
+
+  ensure_daemon
+
+  if [ -n "$output" ]; then
+    curl -sf -X POST "${BASE_URL}/tts" -F "text=${text}" --output "$output"
+  else
+    local tmpfile
+    tmpfile=$(mktemp /tmp/brabpocket-XXXXXX.wav)
+    trap "rm -f '$tmpfile'" EXIT
+    curl -sf -X POST "${BASE_URL}/tts" -F "text=${text}" --output "$tmpfile"
+    afplay "$tmpfile"
+  fi
+}
+
+cmd_serve() {
+  if is_daemon_running; then
+    echo "[brabpocket] Daemon already running (pid $(cat "$PID_FILE"))"
+    return 0
+  fi
+  echo "[brabpocket] Starting daemon on port ${PORT}..."
+  uvx pocket-tts serve --port "$PORT" --voice "$VOICE" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$PID_FILE"
+  wait "$pid"
+}
+
+cmd_status() {
+  if is_daemon_running && curl -sf "${BASE_URL}/health" >/dev/null 2>&1; then
+    echo "[brabpocket] Daemon running (pid $(cat "$PID_FILE")), healthy"
+  elif is_daemon_running; then
+    echo "[brabpocket] Daemon running (pid $(cat "$PID_FILE")), NOT healthy"
+  else
+    echo "[brabpocket] Daemon not running"
+  fi
+}
+
+cmd_stop() {
+  if is_daemon_running; then
+    local pid
+    pid=$(cat "$PID_FILE")
+    kill "$pid" 2>/dev/null && echo "[brabpocket] Stopped daemon (pid ${pid})"
+  else
+    echo "[brabpocket] Daemon not running"
+  fi
+  rm -f "$PID_FILE"
+}
+
+cmd_warmup() {
+  ensure_daemon
+  # Synthesize a short phrase to warm caches
+  curl -sf -X POST "${BASE_URL}/tts" -F "text=Ready." --output /dev/null
+  echo "[brabpocket] Warm and ready"
+}
+
+cmd_help() {
+  cat <<'EOF'
+brabpocket — fast local TTS for Apple Silicon
+
+Usage:
+  brabpocket "text"                    Speak text (auto-starts daemon)
+  brabpocket "text" -o out.wav         Write to file instead
+  brabpocket serve                     Run daemon in foreground
+  brabpocket status                    Check daemon status
+  brabpocket stop                      Stop daemon
+  brabpocket warmup                    Pre-load models
+  brabpocket help                      Show this help
+
+Requires: uv (brew install uv)
+Backend:  pocket-tts (Kyutai PocketTTS, Apache 2.0)
+EOF
+}
+
+# ── main ─────────────────────────────────────────────────────────────
+
+case "${1:-help}" in
+  serve)  cmd_serve ;;
+  status) cmd_status ;;
+  stop)   cmd_stop ;;
+  warmup) cmd_warmup ;;
+  help|--help|-h) cmd_help ;;
+  -*)
+    echo "Unknown option: $1" >&2; cmd_help; exit 1 ;;
+  *)
+    text="$1"; shift
+    output=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -o|--output) output="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+      esac
+    done
+    cmd_speak "$text" "$output"
+    ;;
+esac
