@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import os
 import random
 import re
@@ -59,7 +60,7 @@ def capture_speech(
     speech_count = 0
     recording = False
 
-    q: list[bytes] = []
+    q: collections.deque[bytes] = collections.deque()
     event = threading.Event()
 
     def callback(indata, frames, time_info, status):
@@ -79,7 +80,7 @@ def capture_speech(
             event.wait()
             event.clear()
             while q:
-                frame = q.pop(0)
+                frame = q.popleft()
                 samples = np.frombuffer(frame, dtype=np.int16)
 
                 if energy_dbfs(samples) < energy_threshold:
@@ -400,7 +401,7 @@ class StopWordListener:
             self._thread = None
 
     def _listen(self):
-        q: list[bytes] = []
+        q: collections.deque[bytes] = collections.deque()
         event = threading.Event()
 
         def callback(indata, frames, time_info, status):
@@ -428,7 +429,7 @@ class StopWordListener:
                 event.wait(timeout=0.1)
                 event.clear()
                 while q and self._running:
-                    frame = q.pop(0)
+                    frame = q.popleft()
                     is_speech = self._vad.is_speech(frame, SAMPLE_RATE)
                     if is_speech:
                         speech_frames.append(frame)
@@ -599,6 +600,8 @@ def main():
     parser.add_argument("--model", default="distil-small.en", help="Whisper model")
     parser.add_argument("--voice", default="alba", help="TTS voice")
     parser.add_argument("--energy-threshold", type=float, default=ENERGY_THRESHOLD_DBFS, help="dBFS gate")
+    parser.add_argument("--batch-size", type=int, default=12, help="Whisper batch size (default: 12)")
+    parser.add_argument("--quant", choices=["4bit", "8bit"], default=None, help="Whisper quantization")
     parser.add_argument("--no-typing", action="store_true", help="Disable typing sounds")
     parser.add_argument("--verbose", action="store_true", help="Debug output")
     args = parser.parse_args()
@@ -611,7 +614,10 @@ def main():
     from lightning_whisper_mlx import LightningWhisperMLX
     from pocket_tts import TTSModel
 
-    whisper = LightningWhisperMLX(model=args.model, batch_size=12)
+    whisper_kwargs = {"model": args.model, "batch_size": args.batch_size}
+    if args.quant:
+        whisper_kwargs["quant"] = args.quant
+    whisper = LightningWhisperMLX(**whisper_kwargs)
     tts_model = TTSModel.load_model()
     voice_state = tts_model.get_state_for_audio_prompt(args.voice)
 
