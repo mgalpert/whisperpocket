@@ -106,10 +106,6 @@ uv run python server.py serve --port 8112 --model distil-small.en
 - `POST /transcribe` — raw PCM int16 LE body → `{"text": "...", "duration_ms": N}`
 - `GET /health` — `{"status": "ok", "model": "..."}`
 
-### Hook script (brabble integration)
-
-`wp-hook.sh` integrates with [brabble](https://github.com/steipete/brabble) for wake-word-triggered LLM + TTS. Configurable via `WP`, `LLM_COMMAND`, and `TYPING_AUDIO` env vars.
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
