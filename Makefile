@@ -7,9 +7,11 @@ PLIST_LABEL = com.brabpocket.daemon
 install:
 	install -d $(PREFIX)/bin
 	install brabpocket $(PREFIX)/bin/brabpocket
+	install brabble-tts-hook.sh $(PREFIX)/bin/brabble-tts-hook.sh
 
 uninstall:
 	rm -f $(PREFIX)/bin/brabpocket
+	rm -f $(PREFIX)/bin/brabble-tts-hook.sh
 
 install-daemon: install
 	mkdir -p $(PLIST_DIR)

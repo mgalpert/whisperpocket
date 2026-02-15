@@ -60,11 +60,8 @@ cmd_speak() {
   if [ -n "$output" ]; then
     curl -sf -X POST "${BASE_URL}/tts" -F "text=${text}" --output "$output"
   else
-    local tmpfile
-    tmpfile=$(mktemp /tmp/brabpocket-XXXXXX.wav)
-    trap "rm -f '$tmpfile'" EXIT
-    curl -sf -X POST "${BASE_URL}/tts" -F "text=${text}" --output "$tmpfile"
-    afplay "$tmpfile"
+    curl -sf -N -X POST "${BASE_URL}/tts" -F "text=${text}" \
+      | ffplay -nodisp -autoexit -loglevel quiet -i pipe:0
   fi
 }
 
