@@ -254,6 +254,7 @@ def _extract_keystrokes(path: str) -> tuple[list[np.ndarray], int] | None:
             sr = w.getframerate()
             raw = w.readframes(w.getnframes())
             samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            samples *= 0.12  # lower typing volume
     except Exception:
         return None
 
