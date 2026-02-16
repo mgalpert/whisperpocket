@@ -27,7 +27,7 @@ import webrtcvad
 SAMPLE_RATE = 16000
 FRAME_MS = 20
 FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000  # 320
-SILENCE_MS = 350
+SILENCE_MS = 600
 MIN_SPEECH_MS = 200
 MAX_SEGMENT_S = 10
 ENERGY_THRESHOLD_DBFS = -35
@@ -335,7 +335,10 @@ class TypingPlayer:
                     if self._stop.is_set():
                         return
                     key = random.choice(self._keys)
-                    stream.write(key.reshape(-1, 1))
+                    try:
+                        stream.write(key.reshape(-1, 1))
+                    except sd.PortAudioError:
+                        return
                     if self._stop.wait(random.uniform(self.KEY_MIN, self.KEY_MAX)):
                         return
 
